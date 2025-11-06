@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Admin - Manage Orders</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/sockjs-client/dist/sockjs.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/stompjs/lib/stomp.min.js"></script>
+</head>
+<body class="p-4">
+<div class="container">
+    <h2 class="mb-4">🍔 Admin - Manage Orders</h2>
+    <div id="orderList"></div>
+</div>
+
+<script>
+    const socket = new SockJS('http://localhost:8085/ws');
+    const stompClient = Stomp.over(socket);
+    const orderList = document.getElementById('orderList');
+    const orders = {}; // orderId -> status
+
+    stompClient.connect({}, () => {
+        console.log("✅ Admin connected");
+
+        stompClient.subscribe('/topic/order', (message) => {
+            const order = JSON.parse(message.body);
+
+            // Only show new Placed orders
+            if(order.status === "Placed" && !orders[order.orderId]){
+                createOrderCard(order);
+            }
+        });
+    });
+
+    function createOrderCard(order){
+        orders[order.orderId] = order.status;
+
+        const card = document.createElement('div');
+        card.className = 'card p-3 mb-3';
+        card.id = `card-${order.orderId}`;
+        card.innerHTML = `
+            <h5>Order ID: ${order.orderId}</h5>
+            <p>User: ${order.userId}</p>
+            <p>Product: ${order.productName}</p>
+            <p>Status: <span id="status-${order.orderId}">${order.status}</span></p>
+            <div id="btns-${order.orderId}">
+                <button class="btn btn-success me-2" onclick="receiveOrder('${order.orderId}')">✅ Receive</button>
+                <button class="btn btn-danger" onclick="rejectOrder('${order.orderId}')">❌ Reject</button>
+            </div>
+        `;
+        orderList.appendChild(card);
+    }
+
+    function sendStatus(orderId, status, reason=""){
+        const card = document.getElementById(`card-${orderId}`);
+        const userId = card.querySelector('p:nth-child(2)').innerText.split(": ")[1];
+        const productName = card.querySelector('p:nth-child(3)').innerText.split(": ")[1];
+
+        const payload = { orderId, userId, productName, status };
+        if(reason) payload.reason = reason;
+
+        stompClient.send("/app/order/status", {}, JSON.stringify(payload));
+        document.getElementById(`status-${orderId}`).innerText = status;
+        orders[orderId] = status; // update local status
+    }
+
+    function receiveOrder(orderId){
+        if(!confirm("Are you sure you want to mark this order as Received?")) return;
+        sendStatus(orderId, "Received");
+
+        // Only next step button
+        showNextStepButton(orderId);
+    }
+
+    function rejectOrder(orderId){
+        const reason = prompt("Enter reject reason:");
+        if(!reason) return alert("Reason required");
+        if(!confirm("Are you sure you want to Reject this order?")) return;
+        sendStatus(orderId, "Rejected", reason);
+        document.getElementById(`btns-${orderId}`).innerHTML = `<span class="text-danger fw-bold">Rejected</span>`;
+    }
+
+    function showNextStepButton(orderId){
+        const status = orders[orderId];
+        const btnDiv = document.getElementById(`btns-${orderId}`);
+
+        let nextButton = "";
+        switch(status){
+            case "Received":
+                nextButton = `<button class="btn btn-warning" onclick="confirmNextStep('${orderId}','Prepared')">👨‍🍳 Prepared</button>`;
+                break;
+            case "Prepared":
+                nextButton = `<button class="btn btn-info" onclick="confirmNextStep('${orderId}','Ready')">🧺 Ready</button>`;
+                break;
+            case "Ready":
+                nextButton = `<button class="btn btn-success" onclick="confirmNextStep('${orderId}','Delivered')">🚚 Delivered</button>`;
+                break;
+            default:
+                btnDiv.innerHTML = "";
+                return;
+        }
+
+        btnDiv.innerHTML = nextButton;
+    }
+
+    function confirmNextStep(orderId, nextStatus){
+        if(!confirm(`Are you sure you want to mark this order as ${nextStatus}?`)) return;
+        sendStatus(orderId, nextStatus);
+        // Show next step button automatically
+        showNextStepButton(orderId);
+    }
+</script>
+</body>
+</html>
